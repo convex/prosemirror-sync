@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.8
+
+### Patch Changes
+
+- 009a381: Return the typed component API from the test registration helper.
+
 ## 0.2.7
 
 - Guard pending step submission for editor destruction during server submission
