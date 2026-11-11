@@ -40,7 +40,7 @@ jobs:
       - name: Validate release notes when the proposed merge changes the version
         env:
           BASE_SHA:
-            ${{ github.event.pull_request.base.sha || github.event.before }}
+            ${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
         run: |
           version=$(jq -r .version package.json)
           previous=$(git show "$BASE_SHA:package.json" | jq -r .version)
