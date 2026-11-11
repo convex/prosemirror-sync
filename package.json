@@ -25,18 +25,17 @@
     "dev:build": "chokidar 'tsconfig*.json' 'src/**/*.ts' -i '**/*.test.ts' -c 'npm run build:codegen' --initial",
     "predev": "convex init && npm run build:codegen",
     "build": "tsc --project ./tsconfig.build.json",
+    "prepack": "npm run build",
     "build:codegen": "npx convex codegen --component-dir ./src/component && npm run build",
     "build:clean": "rm -rf dist *.tsbuildinfo && npm run build:codegen",
     "typecheck": "tsc --noEmit && tsc -p example && tsc -p example/convex",
     "lint": "eslint .",
     "test": "vitest run --typecheck",
+    "check": "npm run test && npm run typecheck && npm run lint",
+    "test:e2e": "convex dev --once --typecheck-components",
     "test:watch": "vitest --typecheck --clearScreen false",
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
-    "test:coverage": "vitest run --coverage --coverage.reporter=text",
-    "preversion": "npm ci && npm run build:clean && npm run test && npm run lint && npm run typecheck",
-    "alpha": "npm version prerelease --preid alpha && npm publish --tag alpha && git push --follow-tags",
-    "release": "npm version patch && npm publish && git push --follow-tags",
-    "version": "(npm whoami || npm login) && vim -c 'normal o' -c 'normal o## '$npm_package_version CHANGELOG.md && prettier -w CHANGELOG.md && git add CHANGELOG.md"
+    "test:coverage": "vitest run --coverage --coverage.reporter=text"
   },
   "files": [
     "dist",
@@ -130,7 +129,8 @@
     "typescript": "5.9.3",
     "typescript-eslint": "8.60.0",
     "vite": "8.1.6",
-    "vitest": "4.1.7"
+    "vitest": "4.1.7",
+    "@changesets/cli": "3.0.3"
   },
   "types": "./dist/client/index.d.ts",
   "module": "./dist/client/index.js"
