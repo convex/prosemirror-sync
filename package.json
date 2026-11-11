@@ -129,7 +129,7 @@
     "typescript": "5.9.3",
     "typescript-eslint": "8.60.0",
     "vite": "8.1.6",
-    "vitest": "4.1.7",
+    "vitest": "4.1.11",
     "@changesets/cli": "3.0.3"
   },
   "types": "./dist/client/index.d.ts",
