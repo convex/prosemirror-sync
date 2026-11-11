@@ -101,7 +101,7 @@
     "@eslint/eslintrc": "3.3.5",
     "@eslint/js": "10.0.1",
     "@hocuspocus/provider": "4.1.0",
-    "@tiptap/core": "3.24.0",
+    "@tiptap/core": "3.30.4",
     "@tiptap/extension-highlight": "3.24.0",
     "@tiptap/extension-link": "3.24.0",
     "@tiptap/extension-task-item": "3.24.0",
