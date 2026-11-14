@@ -94,6 +94,12 @@
     },
     "@blocknote/react": {
       "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
     }
   },
   "devDependencies": {
