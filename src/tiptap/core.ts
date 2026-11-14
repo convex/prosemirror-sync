@@ -1,4 +1,8 @@
-import type { ConvexReactClient, Watch } from "convex/react";
+import type {
+  FunctionArgs,
+  FunctionReference,
+  FunctionReturnType,
+} from "convex/server";
 import {
   type AnyExtension,
   type Content,
@@ -41,8 +45,28 @@ export type UseSyncOptions = {
   warnOnUnsyncedClose?: boolean;
 };
 
-/** The methods of the Convex client that the extension calls. */
-type SyncClient = Pick<ConvexReactClient, "query" | "mutation" | "watchQuery">;
+type Watch<T> = {
+  onUpdate(callback: () => void): () => void;
+  localQueryResult(): T | undefined;
+};
+/**
+ * The methods of the Convex client that the extension calls, typed here so
+ * the declarations of this entry don't need React's types.
+ */
+type SyncClient = {
+  query<Query extends FunctionReference<"query">>(
+    query: Query,
+    args: FunctionArgs<Query>,
+  ): Promise<FunctionReturnType<Query>>;
+  mutation<Mutation extends FunctionReference<"mutation">>(
+    mutation: Mutation,
+    args: FunctionArgs<Mutation>,
+  ): Promise<FunctionReturnType<Mutation>>;
+  watchQuery<Query extends FunctionReference<"query">>(
+    query: Query,
+    args: FunctionArgs<Query>,
+  ): Watch<FunctionReturnType<Query>>;
+};
 
 export function syncExtension(
   convex: SyncClient,
