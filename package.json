@@ -55,6 +55,10 @@
       "types": "./dist/tiptap/index.d.ts",
       "default": "./dist/tiptap/index.js"
     },
+    "./tiptap/core": {
+      "types": "./dist/tiptap/core.d.ts",
+      "default": "./dist/tiptap/core.js"
+    },
     "./test": "./src/test.ts",
     "./_generated/component.js": {
       "types": "./dist/component/_generated/component.d.ts"
