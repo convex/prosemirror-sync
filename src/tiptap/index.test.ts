@@ -469,3 +469,36 @@ describe("onDestroy error reporting", () => {
     expect(errors).toEqual([]);
   });
 });
+
+describe("version query errors", () => {
+  test("reports a failed version query instead of rejecting the sync", async () => {
+    const errors: Error[] = [];
+    const failure = new Error("not allowed");
+    let reportError!: (error: Error) => void;
+    const convex = {
+      onUpdate: (...args: unknown[]) => {
+        reportError = args[3] as typeof reportError;
+        return {
+          getCurrentValue: () => {
+            throw failure;
+          },
+          unsubscribe: vi.fn(),
+        };
+      },
+    } as unknown as ConvexClient;
+    const hooks = extensionWith(convex, (error) => errors.push(error))
+      .config as unknown as {
+      onCreate: (this: { editor: Editor }) => void;
+      onUpdate: (this: { editor: Editor }) => void;
+    };
+    const context = { editor: { state: stateAt(1, "me") } as Editor };
+
+    hooks.onCreate.call(context);
+    reportError(failure);
+    hooks.onUpdate.call(context);
+
+    // Give a rejected sync the time to surface as an unhandled rejection.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(errors).toEqual([failure]);
+  });
+});

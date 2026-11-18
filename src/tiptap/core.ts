@@ -106,7 +106,13 @@ export function syncExtension(
   >();
 
   async function trySync(editor: Editor) {
-    const serverVersion = subscriptions.get(editor)?.getCurrentValue();
+    let serverVersion;
+    try {
+      serverVersion = subscriptions.get(editor)?.getCurrentValue();
+    } catch {
+      // The query failed. The subscription reported it through `onError`.
+      return;
+    }
     if (serverVersion === undefined) {
       return;
     }
@@ -228,7 +234,7 @@ export function syncExtension(
       const sync = () => void trySync(editor);
       subscriptions.set(
         editor,
-        convex.onUpdate(syncApi.latestVersion, { id }, sync, sync),
+        convex.onUpdate(syncApi.latestVersion, { id }, sync, reportRecoverable),
       );
       void trySync(editor);
       // Install beforeunload handler if not explicitly disabled.
