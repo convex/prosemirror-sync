@@ -489,16 +489,14 @@ describe("version query errors", () => {
     const hooks = extensionWith(convex, (error) => errors.push(error))
       .config as unknown as {
       onCreate: (this: { editor: Editor }) => void;
-      onUpdate: (this: { editor: Editor }) => void;
     };
-    const context = { editor: { state: stateAt(1, "me") } as Editor };
 
-    hooks.onCreate.call(context);
+    // The first sync reads the failed query, then the subscription reports it.
+    hooks.onCreate.call({ editor: { state: stateAt(1, "me") } as Editor });
     reportError(failure);
-    hooks.onUpdate.call(context);
 
     // Give a rejected sync the time to surface as an unhandled rejection.
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(errors).toEqual([failure]);
+    expect(errors).toEqual([failure, failure]);
   });
 });

@@ -109,9 +109,9 @@ export function syncExtension(
     let serverVersion;
     try {
       serverVersion = subscriptions.get(editor)?.getCurrentValue();
-    } catch {
-      // The query failed. The subscription reported it through `onError`.
-      return;
+    } catch (error) {
+      // The query failed, so there is no version to sync to.
+      return reportRecoverable(error as Error);
     }
     if (serverVersion === undefined) {
       return;
