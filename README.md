@@ -193,6 +193,38 @@ export function MyComponent() {
 See a working example in [example.ts](./example/convex/example.ts) and
 [App.tsx](./example/src/App.tsx).
 
+### Tiptap on other frameworks
+
+`@convex-dev/prosemirror-sync/tiptap/core` exports the Tiptap extension without
+React. Pass it a
+[`ConvexClient`](https://docs.convex.dev/api/classes/browser.ConvexClient) and
+the snapshot to start from:
+
+```ts
+import { ConvexClient } from "convex/browser";
+import { Editor } from "@tiptap/core";
+import StarterKit from "@tiptap/starter-kit";
+import { syncExtension } from "@convex-dev/prosemirror-sync/tiptap/core";
+import { api } from "../convex/_generated/api";
+
+const convex = new ConvexClient(import.meta.env.VITE_CONVEX_URL);
+const snapshot = await convex.query(api.example.getSnapshot, { id: "some-id" });
+if (snapshot.content === null) throw new Error("Document not found");
+const initialContent = JSON.parse(snapshot.content);
+
+const editor = new Editor({
+  element: document.querySelector("#editor")!,
+  content: initialContent,
+  extensions: [
+    StarterKit,
+    syncExtension(convex, "some-id", api.example, {
+      initialContent,
+      initialVersion: snapshot.version,
+    }),
+  ],
+});
+```
+
 ## Notes
 
 ### Configuring the snapshot debounce interval
