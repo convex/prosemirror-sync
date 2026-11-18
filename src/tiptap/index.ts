@@ -1,4 +1,9 @@
-import { useConvex, useMutation, useQuery } from "convex/react";
+import {
+  type ConvexReactClient,
+  useConvex,
+  useMutation,
+  useQuery,
+} from "convex/react";
 import type { AnyExtension, Content, JSONContent } from "@tiptap/core";
 import { useCallback, useMemo, useRef } from "react";
 import type { SyncApi } from "../client/index.js";
@@ -8,7 +13,33 @@ import {
   syncExtension,
 } from "./core.js";
 
-export * from "./core.js";
+export { syncExtension, type UseSyncOptions } from "./core.js";
+
+/** Adapts the React client to the `ConvexClient` methods of `syncExtension`. */
+function toSyncClient(
+  convex: ConvexReactClient,
+): Parameters<typeof syncExtension>[0] {
+  return {
+    query: (query, args) => convex.query(query, args),
+    mutation: (mutation, args) => convex.mutation(mutation, args),
+    onUpdate: (query, args, callback, onError) => {
+      const watch = convex.watchQuery(query, args);
+      const unsubscribe = watch.onUpdate(() => {
+        let result;
+        try {
+          result = watch.localQueryResult();
+        } catch (error) {
+          return onError?.(error as Error);
+        }
+        if (result !== undefined) callback(result);
+      });
+      return Object.assign(unsubscribe, {
+        unsubscribe,
+        getCurrentValue: () => watch.localQueryResult(),
+      });
+    },
+  };
+}
 
 export function useTiptapSync(
   syncApi: SyncApi,
@@ -21,7 +52,7 @@ export function useTiptapSync(
   const extension: AnyExtension | null = useMemo(() => {
     const { loading, ...initialState } = initial;
     if (loading || !initialState.initialContent) return null;
-    return syncExtension(convex, id, syncApi, initialState, opts);
+    return syncExtension(toSyncClient(convex), id, syncApi, initialState, opts);
     // // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [convex, id, initial.loading, initial.initialContent]);
   const submitSnapshot = useMutation(

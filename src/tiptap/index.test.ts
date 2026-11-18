@@ -3,7 +3,7 @@
 import { webcrypto as crypto } from "node:crypto";
 import { describe, expect, test, vi } from "vitest";
 import { convexTest, type TestConvex } from "convex-test";
-import type { ConvexReactClient } from "convex/react";
+import type { ConvexClient } from "convex/browser";
 import { getFunctionName } from "convex/server";
 import type { AnyExtension, Editor } from "@tiptap/core";
 import { Schema } from "@tiptap/pm/model";
@@ -13,7 +13,8 @@ import * as collab from "prosemirror-collab";
 import componentSchema from "../component/schema.js";
 import { api } from "../component/_generated/api.js";
 import type { SyncApi } from "../client/index.js";
-import { _flushPendingSteps, syncExtension } from "./index.js";
+import { _flushPendingSteps } from "./core.js";
+import { syncExtension } from "./index.js";
 
 const modules = import.meta.glob("../component/**/*.*s");
 
@@ -36,20 +37,20 @@ type SubmitStepsResult =
     };
 
 /**
- * A `ConvexReactClient` stand-in exposing just what `_flushPendingSteps` uses:
+ * A `ConvexClient` stand-in exposing just what `_flushPendingSteps` uses:
  * `mutation(syncApi.submitSteps, args)`. The function reference is ignored
  * since that's the only call it makes.
  */
 function fakeClient(
   submitSteps: (args: SubmitStepsArgs) => Promise<SubmitStepsResult>,
-): ConvexReactClient {
+): ConvexClient {
   return {
     mutation: (_reference: unknown, args: unknown) =>
       submitSteps(args as SubmitStepsArgs),
-  } as unknown as ConvexReactClient;
+  } as unknown as ConvexClient;
 }
 
-function realClient(t: TestConvex<typeof componentSchema>): ConvexReactClient {
+function realClient(t: TestConvex<typeof componentSchema>): ConvexClient {
   return fakeClient((args) => t.mutation(api.lib.submitSteps, args));
 }
 
@@ -306,7 +307,7 @@ function destroy(extension: AnyExtension, state: EditorState) {
 }
 
 function extensionWith(
-  convex: ConvexReactClient,
+  convex: ConvexClient,
   onSyncError: (error: Error) => void,
 ) {
   return syncExtension(
@@ -352,11 +353,8 @@ describe("destroy during sync", () => {
           getFunctionName(reference) === getFunctionName(syncApi.submitSteps)
             ? submit(args)
             : submitSnapshot(args),
-        watchQuery: () => ({
-          localQueryResult: () => 1,
-          onUpdate: () => unsubscribe,
-        }),
-      } as unknown as ConvexReactClient;
+        onUpdate: () => ({ getCurrentValue: () => 1, unsubscribe }),
+      } as unknown as ConvexClient;
       const onSyncError = vi.fn();
       const extension = extensionWith(convex, onSyncError);
       const hooks = extension.config as unknown as {

@@ -1,8 +1,4 @@
-import type {
-  FunctionArgs,
-  FunctionReference,
-  FunctionReturnType,
-} from "convex/server";
+import type { ConvexClient } from "convex/browser";
 import {
   type AnyExtension,
   type Content,
@@ -45,28 +41,8 @@ export type UseSyncOptions = {
   warnOnUnsyncedClose?: boolean;
 };
 
-type Watch<T> = {
-  onUpdate(callback: () => void): () => void;
-  localQueryResult(): T | undefined;
-};
-/**
- * The methods of the Convex client that the extension calls, typed here so
- * the declarations of this entry don't need React's types.
- */
-type SyncClient = {
-  query<Query extends FunctionReference<"query">>(
-    query: Query,
-    args: FunctionArgs<Query>,
-  ): Promise<FunctionReturnType<Query>>;
-  mutation<Mutation extends FunctionReference<"mutation">>(
-    mutation: Mutation,
-    args: FunctionArgs<Mutation>,
-  ): Promise<FunctionReturnType<Mutation>>;
-  watchQuery<Query extends FunctionReference<"query">>(
-    query: Query,
-    args: FunctionArgs<Query>,
-  ): Watch<FunctionReturnType<Query>>;
-};
+/** The methods of `ConvexClient` that the extension calls. */
+type SyncClient = Pick<ConvexClient, "query" | "mutation" | "onUpdate">;
 
 export function syncExtension(
   convex: SyncClient,
@@ -122,7 +98,7 @@ export function syncExtension(
   // tear down only its own subscription.
   const subscriptions = new Map<
     Editor,
-    { watch: Watch<number | null>; unsubscribe: () => void }
+    ReturnType<typeof convex.onUpdate<SyncApi["latestVersion"]>>
   >();
   const beforeUnloadHandlers = new Map<
     Editor,
@@ -130,7 +106,7 @@ export function syncExtension(
   >();
 
   async function trySync(editor: Editor) {
-    const serverVersion = subscriptions.get(editor)?.watch.localQueryResult();
+    const serverVersion = subscriptions.get(editor)?.getCurrentValue();
     if (serverVersion === undefined) {
       return;
     }
@@ -249,11 +225,11 @@ export function syncExtension(
         this.editor.view.dispatch(tr);
       }
       const editor = this.editor;
-      const watch = convex.watchQuery(syncApi.latestVersion, { id });
-      const unsubscribe = watch.onUpdate(() => {
-        void trySync(editor);
-      });
-      subscriptions.set(editor, { watch, unsubscribe });
+      const sync = () => void trySync(editor);
+      subscriptions.set(
+        editor,
+        convex.onUpdate(syncApi.latestVersion, { id }, sync, sync),
+      );
       void trySync(editor);
       // Install beforeunload handler if not explicitly disabled.
       if (
