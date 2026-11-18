@@ -7,7 +7,7 @@
     "email": "support@convex.dev",
     "url": "https://github.com/convex/prosemirror-sync/issues"
   },
-  "version": "0.2.7",
+  "version": "0.2.8",
   "license": "Apache-2.0",
   "keywords": [
     "convex",
