@@ -10,36 +10,10 @@ import type { SyncApi } from "../client/index.js";
 import {
   type InitialState,
   type UseSyncOptions,
-  syncExtension,
+  syncExtension as syncExtensionCore,
 } from "./core.js";
 
-export { syncExtension, type UseSyncOptions } from "./core.js";
-
-/** Adapts the React client to the `ConvexClient` methods of `syncExtension`. */
-function toSyncClient(
-  convex: ConvexReactClient,
-): Parameters<typeof syncExtension>[0] {
-  return {
-    query: (query, args) => convex.query(query, args),
-    mutation: (mutation, args) => convex.mutation(mutation, args),
-    onUpdate: (query, args, callback, onError) => {
-      const watch = convex.watchQuery(query, args);
-      const unsubscribe = watch.onUpdate(() => {
-        let result;
-        try {
-          result = watch.localQueryResult();
-        } catch (error) {
-          return onError?.(error as Error);
-        }
-        if (result !== undefined) callback(result);
-      });
-      return Object.assign(unsubscribe, {
-        unsubscribe,
-        getCurrentValue: () => watch.localQueryResult(),
-      });
-    },
-  };
-}
+export type { UseSyncOptions } from "./core.js";
 
 export function useTiptapSync(
   syncApi: SyncApi,
@@ -52,7 +26,7 @@ export function useTiptapSync(
   const extension: AnyExtension | null = useMemo(() => {
     const { loading, ...initialState } = initial;
     if (loading || !initialState.initialContent) return null;
-    return syncExtension(toSyncClient(convex), id, syncApi, initialState, opts);
+    return syncExtension(convex, id, syncApi, initialState, opts);
     // // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [convex, id, initial.loading, initial.initialContent]);
   const submitSnapshot = useMutation(
@@ -117,6 +91,45 @@ export function useTiptapSync(
     isLoading: false,
     initialContent: initial.initialContent,
   } as const;
+}
+
+/**
+ * The sync extension for a `ConvexReactClient`. It adapts the client to the
+ * `ConvexClient` methods that `syncExtension` in `./core.js` calls.
+ */
+export function syncExtension(
+  convex: ConvexReactClient,
+  id: string,
+  syncApi: SyncApi,
+  initialState: InitialState,
+  opts?: UseSyncOptions,
+): AnyExtension {
+  return syncExtensionCore(
+    {
+      query: (query, args) => convex.query(query, args),
+      mutation: (mutation, args) => convex.mutation(mutation, args),
+      onUpdate: (query, args, callback, onError) => {
+        const watch = convex.watchQuery(query, args);
+        const unsubscribe = watch.onUpdate(() => {
+          let result;
+          try {
+            result = watch.localQueryResult();
+          } catch (error) {
+            return onError?.(error as Error);
+          }
+          if (result !== undefined) callback(result);
+        });
+        return Object.assign(unsubscribe, {
+          unsubscribe,
+          getCurrentValue: () => watch.localQueryResult(),
+        });
+      },
+    },
+    id,
+    syncApi,
+    initialState,
+    opts,
+  );
 }
 
 export function useInitialState(

@@ -4,6 +4,7 @@ import { webcrypto as crypto } from "node:crypto";
 import { describe, expect, test, vi } from "vitest";
 import { convexTest, type TestConvex } from "convex-test";
 import type { ConvexClient } from "convex/browser";
+import type { ConvexReactClient } from "convex/react";
 import { getFunctionName } from "convex/server";
 import type { AnyExtension, Editor } from "@tiptap/core";
 import { Schema } from "@tiptap/pm/model";
@@ -13,8 +14,8 @@ import * as collab from "prosemirror-collab";
 import componentSchema from "../component/schema.js";
 import { api } from "../component/_generated/api.js";
 import type { SyncApi } from "../client/index.js";
-import { _flushPendingSteps } from "./core.js";
-import { syncExtension } from "./index.js";
+import { _flushPendingSteps, syncExtension } from "./core.js";
+import { syncExtension as reactSyncExtension } from "./index.js";
 
 const modules = import.meta.glob("../component/**/*.*s");
 
@@ -498,5 +499,68 @@ describe("version query errors", () => {
     // Give a rejected sync the time to surface as an unhandled rejection.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(errors).toEqual([failure, failure]);
+  });
+});
+
+describe("syncExtension from ./tiptap", () => {
+  test("syncs through a ConvexReactClient", async () => {
+    const errors: Error[] = [];
+    const failure = new Error("not allowed");
+    let readVersion = (): number => 1;
+    let notify!: () => void;
+    const unsubscribe = vi.fn();
+    const submit = vi.fn(async (_args: SubmitStepsArgs) => ({
+      status: "synced" as const,
+    }));
+    // The React client has `watchQuery`, where `ConvexClient` has `onUpdate`.
+    const convex = {
+      mutation: (_reference: unknown, args: SubmitStepsArgs) => submit(args),
+      watchQuery: () => ({
+        localQueryResult: () => readVersion(),
+        onUpdate: (listener: () => void) => {
+          notify = listener;
+          return unsubscribe;
+        },
+      }),
+    } as unknown as ConvexReactClient;
+    const hooks = reactSyncExtension(
+      convex,
+      "doc",
+      syncApi,
+      { initialContent: { type: "doc", content: [] }, initialVersion: 1 },
+      { onSyncError: (error) => errors.push(error), snapshotDebounceMs: 1e6 },
+    ).config as unknown as {
+      onCreate: (this: { editor: Editor }) => void;
+      onDestroy: (this: { editor: Editor }) => void;
+    };
+    const editor = {
+      state: typeText(stateAt(1, "me"), "hello"),
+      schema,
+      isDestroyed: false,
+      view: {
+        dispatch: (tr: Parameters<EditorState["apply"]>[0]) => {
+          editor.state = editor.state.apply(tr);
+        },
+      },
+    };
+    const context = { editor: editor as unknown as Editor };
+
+    // The version comes from the watch, so the local step is submitted.
+    hooks.onCreate.call(context);
+    await vi.waitFor(() => expect(submit).toHaveBeenCalledOnce());
+    await vi.waitFor(() =>
+      expect(collab.sendableSteps(editor.state)).toBeNull(),
+    );
+    expect(errors).toEqual([]);
+
+    // A failed query reaches `onSyncError` when the watch updates.
+    readVersion = () => {
+      throw failure;
+    };
+    notify();
+    expect(errors).toEqual([failure]);
+
+    hooks.onDestroy.call(context);
+    expect(unsubscribe).toHaveBeenCalledOnce();
   });
 });
