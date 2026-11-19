@@ -70,14 +70,6 @@ export function syncExtension(
     log("Ignoring recoverable sync error", error);
     opts?.onSyncError?.(error);
   };
-  // Every sync reads the version query and the subscription reports it too,
-  // so report a failure once, until the query succeeds again.
-  let versionErrorReported = false;
-  const reportVersionError = (error: Error) => {
-    if (versionErrorReported) return;
-    versionErrorReported = true;
-    reportRecoverable(error);
-  };
   let snapshotTimer: NodeJS.Timeout | undefined;
   const trySubmitSnapshot = (version: number, content: string) => {
     if (snapshotTimer) {
@@ -117,14 +109,14 @@ export function syncExtension(
     let serverVersion;
     try {
       serverVersion = subscriptions.get(editor)?.getCurrentValue();
-    } catch (error) {
-      // The query failed, so there is no version to sync to.
-      return reportVersionError(error as Error);
+    } catch {
+      // The query failed, so there is no version to sync to. The subscription
+      // reports the failure.
+      return;
     }
     if (serverVersion === undefined) {
       return;
     }
-    versionErrorReported = false;
     if (serverVersion && serverVersion > collab.getVersion(editor.state)) {
       clearTimeout(snapshotTimer);
       snapshotTimer = undefined;
@@ -243,12 +235,7 @@ export function syncExtension(
       const sync = () => void trySync(editor);
       subscriptions.set(
         editor,
-        convex.onUpdate(
-          syncApi.latestVersion,
-          { id },
-          sync,
-          reportVersionError,
-        ),
+        convex.onUpdate(syncApi.latestVersion, { id }, sync, reportRecoverable),
       );
       void trySync(editor);
       // Install beforeunload handler if not explicitly disabled.

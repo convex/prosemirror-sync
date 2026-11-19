@@ -110,7 +110,7 @@ export function syncExtension(
       mutation: (mutation, args) => convex.mutation(mutation, args),
       onUpdate: (query, args, callback, onError) => {
         const watch = convex.watchQuery(query, args);
-        const unsubscribe = watch.onUpdate(() => {
+        const notify = () => {
           let result;
           try {
             result = watch.localQueryResult();
@@ -118,7 +118,11 @@ export function syncExtension(
             return onError?.(error as Error);
           }
           if (result !== undefined) callback(result);
-        });
+        };
+        const unsubscribe = watch.onUpdate(notify);
+        // `ConvexClient` tells a new listener the result it already has. The
+        // watch only tells of changes, so do that here.
+        notify();
         return Object.assign(unsubscribe, {
           unsubscribe,
           getCurrentValue: () => watch.localQueryResult(),
