@@ -472,32 +472,45 @@ describe("onDestroy error reporting", () => {
 });
 
 describe("version query errors", () => {
-  test("reports a failed version query instead of rejecting the sync", async () => {
+  test("reports a failed version query once, until the query succeeds again", async () => {
     const errors: Error[] = [];
     const failure = new Error("not allowed");
+    const fail = (): number => {
+      throw failure;
+    };
+    let readVersion = fail;
+    let notify!: () => void;
     let reportError!: (error: Error) => void;
     const convex = {
       onUpdate: (...args: unknown[]) => {
+        notify = args[2] as typeof notify;
         reportError = args[3] as typeof reportError;
-        return {
-          getCurrentValue: () => {
-            throw failure;
-          },
-          unsubscribe: vi.fn(),
-        };
+        return { getCurrentValue: () => readVersion(), unsubscribe: vi.fn() };
       },
     } as unknown as ConvexClient;
     const hooks = extensionWith(convex, (error) => errors.push(error))
       .config as unknown as {
       onCreate: (this: { editor: Editor }) => void;
+      onUpdate: (this: { editor: Editor }) => void;
     };
+    const context = { editor: { state: stateAt(1, "me") } as Editor };
 
-    // The first sync reads the failed query, then the subscription reports it.
-    hooks.onCreate.call({ editor: { state: stateAt(1, "me") } as Editor });
+    // The first sync reads the failed query, the subscription reports it, and
+    // a local edit reads it again.
+    hooks.onCreate.call(context);
     reportError(failure);
-
+    hooks.onUpdate.call(context);
     // Give a rejected sync the time to surface as an unhandled rejection.
     await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(errors).toEqual([failure]);
+
+    // The query succeeds, then fails again: that is a new failure.
+    readVersion = () => 1;
+    notify();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    readVersion = fail;
+    reportError(failure);
+    hooks.onUpdate.call(context);
     expect(errors).toEqual([failure, failure]);
   });
 });
