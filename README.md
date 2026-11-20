@@ -225,6 +225,18 @@ const editor = new Editor({
 });
 ```
 
+The snapshot's `content` is `null` until the document exists. To create the
+document, submit its first snapshot, which is what `sync.create` does in the
+React hook:
+
+```ts
+await convex.mutation(api.example.submitSnapshot, {
+  id: "some-id",
+  version: 1,
+  content: JSON.stringify({ type: "doc", content: [] }),
+});
+```
+
 ## Notes
 
 ### Configuring the snapshot debounce interval
