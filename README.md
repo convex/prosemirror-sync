@@ -279,6 +279,10 @@ means local steps never made it to the server before the editor went away. If
 you haven't passed `onSyncError`, that one surfaces as an unhandled rejection
 rather than being dropped silently.
 
+A failed `latestVersion` query stops the sync until the query succeeds again. It
+is reported once per failed result, and without `onSyncError` it surfaces as an
+unhandled rejection too.
+
 ### Unmounting with unsynced changes
 
 Local steps are the source of truth until the server confirms them, so when an

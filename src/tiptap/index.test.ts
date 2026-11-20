@@ -515,6 +515,155 @@ describe("version query errors", () => {
     hooks.onUpdate.call(context);
     expect(errors).toEqual([denied, gone]);
   });
+
+  test("leaves a failed version query unhandled when there is no onSyncError", async () => {
+    const failure = new Error("not allowed");
+    let reportError!: (error: Error) => void;
+    const convex = {
+      onUpdate: (...args: unknown[]) => {
+        reportError = args[3] as typeof reportError;
+        return {
+          getCurrentValue: () => {
+            throw failure;
+          },
+          unsubscribe: vi.fn(),
+        };
+      },
+    } as unknown as ConvexClient;
+    const hooks = syncExtension(convex, "doc", syncApi, {
+      initialContent: { type: "doc", content: [] },
+      initialVersion: 1,
+    }).config as unknown as {
+      onCreate: (this: { editor: Editor }) => void;
+      onUpdate: (this: { editor: Editor }) => void;
+    };
+    const context = { editor: { state: stateAt(1, "me") } as Editor };
+
+    // The sync has stopped, so the app hears of it once, not on every edit.
+    const unhandled = await unhandledRejections(() => {
+      hooks.onCreate.call(context);
+      reportError(failure);
+      hooks.onUpdate.call(context);
+    });
+    expect(unhandled).toEqual([failure]);
+  });
+});
+
+/**
+ * Runs `act` and returns the rejections it left unhandled, which would
+ * otherwise fail the test run.
+ */
+async function unhandledRejections(act: () => void) {
+  const listeners = process.listeners("unhandledRejection");
+  process.removeAllListeners("unhandledRejection");
+  const reasons: unknown[] = [];
+  process.on("unhandledRejection", (reason) => reasons.push(reason));
+  try {
+    act();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  } finally {
+    process.removeAllListeners("unhandledRejection");
+    for (const listener of listeners) {
+      process.on("unhandledRejection", listener);
+    }
+  }
+  return reasons;
+}
+
+/** A stand-in for a live Tiptap editor: its view applies what is dispatched. */
+function liveEditor(state: EditorState) {
+  const editor = {
+    state,
+    schema,
+    isDestroyed: false,
+    view: {
+      dispatch: (tr: Parameters<EditorState["apply"]>[0]) => {
+        editor.state = editor.state.apply(tr);
+      },
+    },
+  };
+  return editor;
+}
+
+describe("updates from the subscription", () => {
+  test("a new version starts a sync", async () => {
+    let readVersion = (): number | undefined => undefined;
+    let notify!: () => void;
+    const submit = vi.fn(async (_args: SubmitStepsArgs) => ({
+      status: "synced" as const,
+    }));
+    const convex = {
+      mutation: (_reference: unknown, args: SubmitStepsArgs) => submit(args),
+      onUpdate: (...args: unknown[]) => {
+        notify = args[2] as typeof notify;
+        return { getCurrentValue: () => readVersion(), unsubscribe: vi.fn() };
+      },
+    } as unknown as ConvexClient;
+    const hooks = syncExtension(
+      convex,
+      "doc",
+      syncApi,
+      { initialContent: { type: "doc", content: [] }, initialVersion: 1 },
+      { snapshotDebounceMs: 1e6 },
+    ).config as unknown as {
+      onCreate: (this: { editor: Editor }) => void;
+      onDestroy: (this: { editor: Editor }) => void;
+    };
+    const editor = liveEditor(typeText(stateAt(1, "me"), "hello"));
+    const context = { editor: editor as unknown as Editor };
+
+    // The query is still loading, so there is no version to sync to.
+    hooks.onCreate.call(context);
+    expect(submit).not.toHaveBeenCalled();
+
+    readVersion = () => 1;
+    notify();
+    await vi.waitFor(() =>
+      expect(collab.sendableSteps(editor.state)).toBeNull(),
+    );
+    expect(submit).toHaveBeenCalledOnce();
+    hooks.onDestroy.call(context);
+  });
+
+  test("a new version from a ConvexReactClient pulls the server's steps", async () => {
+    let readVersion = (): number | undefined => undefined;
+    let notify!: () => void;
+    const query = vi.fn(async () => ({
+      steps: stepsJSON(typeText(stateAt(1, "other"), "remote")),
+      clientIds: ["other"],
+    }));
+    const convex = {
+      query,
+      watchQuery: () => ({
+        localQueryResult: () => readVersion(),
+        onUpdate: (listener: () => void) => {
+          notify = listener;
+          return vi.fn();
+        },
+      }),
+    } as unknown as ConvexReactClient;
+    const hooks = reactSyncExtension(convex, "doc", syncApi, {
+      initialContent: { type: "doc", content: [] },
+      initialVersion: 1,
+    }).config as unknown as {
+      onCreate: (this: { editor: Editor }) => void;
+      onDestroy: (this: { editor: Editor }) => void;
+    };
+    const editor = liveEditor(stateAt(1, "me"));
+    const context = { editor: editor as unknown as Editor };
+
+    hooks.onCreate.call(context);
+    expect(query).not.toHaveBeenCalled();
+
+    readVersion = () => 2;
+    notify();
+    await vi.waitFor(() => expect(editor.state.doc.textContent).toBe("remote"));
+    expect(query).toHaveBeenCalledWith(syncApi.getSteps, {
+      id: "doc",
+      version: 1,
+    });
+    hooks.onDestroy.call(context);
+  });
 });
 
 describe("syncExtension from ./tiptap", () => {

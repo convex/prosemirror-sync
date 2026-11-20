@@ -28,6 +28,10 @@ export type UseSyncOptions = {
    * which means local steps never reached the server before the editor went
    * away. Without a handler that one surfaces as an unhandled rejection
    * rather than being dropped silently.
+   *
+   * A failed `latestVersion` query stops the sync until the query succeeds
+   * again. It is reported once per failed result, and without a handler it
+   * surfaces as an unhandled rejection too.
    */
   onSyncError?: (error: Error) => void;
   snapshotDebounceMs?: number;
@@ -53,7 +57,8 @@ export function syncExtension(
 ): AnyExtension {
   const log: typeof console.log = opts?.debug ? console.debug : () => {};
   // Background work has no caller to propagate a failure to, so it reports
-  // through one of these two. The split is whether local edits were lost.
+  // through one of these. The first two split on whether local edits were
+  // lost.
 
   // Lost work: tell the app even if it didn't ask to be told, since silently
   // dropping a user's edits is never the right default. Rethrowing from here
@@ -69,6 +74,17 @@ export function syncExtension(
   const reportRecoverable = (error: Error) => {
     log("Ignoring recoverable sync error", error);
     opts?.onSyncError?.(error);
+  };
+  // The version query failed, so the sync has stopped until it succeeds
+  // again: tell the app even if it didn't ask to be told. The client calls
+  // this from its update loop, where a throw would cut off its other
+  // listeners, so reject instead.
+  const reportVersionError = (error: Error) => {
+    if (opts?.onSyncError) {
+      opts.onSyncError(error);
+    } else {
+      void Promise.reject(error);
+    }
   };
   let snapshotTimer: NodeJS.Timeout | undefined;
   const trySubmitSnapshot = (version: number, content: string) => {
@@ -235,7 +251,12 @@ export function syncExtension(
       const sync = () => void trySync(editor);
       subscriptions.set(
         editor,
-        convex.onUpdate(syncApi.latestVersion, { id }, sync, reportRecoverable),
+        convex.onUpdate(
+          syncApi.latestVersion,
+          { id },
+          sync,
+          reportVersionError,
+        ),
       );
       void trySync(editor);
       // Install beforeunload handler if not explicitly disabled.
