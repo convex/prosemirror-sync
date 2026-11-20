@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { expect, expectTypeOf, test, vi } from "vitest";
 import type { ConvexClient } from "convex/browser";
 import type { ConvexReactClient } from "convex/react";
@@ -21,4 +22,19 @@ test("the Tiptap extension takes a ConvexClient as is", () => {
   expectTypeOf<ConvexClient>().toExtend<Client>();
   // The React client has `watchQuery` where this one has `onUpdate`.
   expectTypeOf<ConvexReactClient>().not.toExtend<Client>();
+});
+
+test("package.json exports the entry and keeps React optional", async () => {
+  const pkg = JSON.parse(
+    await readFile(new URL("../../package.json", import.meta.url), "utf8"),
+  ) as Record<string, Record<string, unknown>>;
+  // `src/tiptap/core.ts` builds to `dist/tiptap/core.js`.
+  expect(pkg.exports["./tiptap/core"]).toEqual({
+    types: "./dist/tiptap/core.d.ts",
+    default: "./dist/tiptap/core.js",
+  });
+  expect(pkg.peerDependenciesMeta).toMatchObject({
+    react: { optional: true },
+    "react-dom": { optional: true },
+  });
 });
