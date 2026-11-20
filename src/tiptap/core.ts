@@ -78,12 +78,15 @@ export function syncExtension(
   // The version query failed, so the sync has stopped until it succeeds
   // again: tell the app even if it didn't ask to be told. The client calls
   // this from its update loop, where a throw would cut off its other
-  // listeners, so reject instead.
+  // listeners, so a missing handler, or one that throws, becomes a rejection.
   const reportVersionError = (error: Error) => {
-    if (opts?.onSyncError) {
+    try {
+      if (!opts?.onSyncError) {
+        throw error;
+      }
       opts.onSyncError(error);
-    } else {
-      void Promise.reject(error);
+    } catch (thrown) {
+      void Promise.reject(thrown);
     }
   };
   let snapshotTimer: NodeJS.Timeout | undefined;

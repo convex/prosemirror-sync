@@ -547,6 +547,27 @@ describe("version query errors", () => {
     });
     expect(unhandled).toEqual([failure]);
   });
+
+  test("keeps an onSyncError that throws out of the client's update loop", async () => {
+    const failure = new Error("not allowed");
+    const bug = new Error("the handler threw");
+    let reportError!: (error: Error) => void;
+    const convex = {
+      onUpdate: (...args: unknown[]) => {
+        reportError = args[3] as typeof reportError;
+        return { getCurrentValue: () => undefined, unsubscribe: vi.fn() };
+      },
+    } as unknown as ConvexClient;
+    const hooks = extensionWith(convex, () => {
+      throw bug;
+    }).config as unknown as { onCreate: (this: { editor: Editor }) => void };
+
+    const unhandled = await unhandledRejections(() => {
+      hooks.onCreate.call({ editor: { state: stateAt(1, "me") } as Editor });
+      expect(() => reportError(failure)).not.toThrow();
+    });
+    expect(unhandled).toEqual([bug]);
+  });
 });
 
 /**
