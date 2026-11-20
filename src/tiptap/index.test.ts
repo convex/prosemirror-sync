@@ -3,7 +3,7 @@
 import { webcrypto as crypto } from "node:crypto";
 import { describe, expect, test, vi } from "vitest";
 import { convexTest, type TestConvex } from "convex-test";
-import type { ConvexClient } from "convex/browser";
+import { ConvexClient } from "convex/browser";
 import type { ConvexReactClient } from "convex/react";
 import { getFunctionName } from "convex/server";
 import type { AnyExtension, Editor } from "@tiptap/core";
@@ -320,6 +320,49 @@ function extensionWith(
   );
 }
 
+/**
+ * `ConvexClient`'s `onUpdate` for the version query. Like the real client, it
+ * tells a new listener of the result `read` already has, once and on a later
+ * task, and of every later result when `update` is called.
+ */
+function versionSubscription(read: () => number | null | undefined) {
+  const listeners = new Set<() => void>();
+  const unsubscribe = vi.fn();
+  const onUpdate = (
+    _query: unknown,
+    _args: unknown,
+    callback: (version: number | null) => void,
+    onError: (error: Error) => void,
+  ) => {
+    let told = false;
+    const tell = () => {
+      told = true;
+      let version;
+      try {
+        version = read();
+      } catch (error) {
+        return onError(error as Error);
+      }
+      if (version !== undefined) callback(version);
+    };
+    listeners.add(tell);
+    setTimeout(() => {
+      if (!told && listeners.has(tell)) tell();
+    }, 0);
+    return {
+      getCurrentValue: read,
+      unsubscribe: () => {
+        unsubscribe();
+        listeners.delete(tell);
+      },
+    };
+  };
+  const update = () => listeners.forEach((tell) => tell());
+  return { onUpdate, unsubscribe, update };
+}
+
+const nextTask = () => new Promise((resolve) => setTimeout(resolve, 0));
+
 describe("destroy during sync", () => {
   test.each(["synced", "needs-rebase"] as const)(
     "leaves the flush in charge when the in-flight submit returns %s",
@@ -347,14 +390,14 @@ describe("destroy during sync", () => {
         queue = result;
         return result;
       });
-      const unsubscribe = vi.fn();
+      const { onUpdate, unsubscribe } = versionSubscription(() => 1);
       const submitSnapshot = vi.fn();
       const convex = {
         mutation: (reference: SyncApi["submitSteps"], args: SubmitStepsArgs) =>
           getFunctionName(reference) === getFunctionName(syncApi.submitSteps)
             ? submit(args)
             : submitSnapshot(args),
-        onUpdate: () => ({ getCurrentValue: () => 1, unsubscribe }),
+        onUpdate,
       } as unknown as ConvexClient;
       const onSyncError = vi.fn();
       const extension = extensionWith(convex, onSyncError);
@@ -477,18 +520,10 @@ describe("version query errors", () => {
     const denied = new Error("not allowed");
     const gone = new Error("document deleted");
     let failure = denied;
-    let reportError!: (error: Error) => void;
-    const convex = {
-      onUpdate: (...args: unknown[]) => {
-        reportError = args[3] as typeof reportError;
-        return {
-          getCurrentValue: () => {
-            throw failure;
-          },
-          unsubscribe: vi.fn(),
-        };
-      },
-    } as unknown as ConvexClient;
+    const { onUpdate, update } = versionSubscription(() => {
+      throw failure;
+    });
+    const convex = { onUpdate } as unknown as ConvexClient;
     const hooks = extensionWith(convex, (error) => errors.push(error))
       .config as unknown as {
       onCreate: (this: { editor: Editor }) => void;
@@ -496,40 +531,31 @@ describe("version query errors", () => {
     };
     const context = { editor: { state: stateAt(1, "me") } as Editor };
 
-    // The first sync and a local edit read the failed query without
-    // reporting it or rejecting.
+    // A local edit reads the failed query without reporting it.
     hooks.onCreate.call(context);
     hooks.onUpdate.call(context);
-    // Give a rejected sync the time to surface as an unhandled rejection.
-    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(errors).toEqual([]);
 
     // The subscription reports it, and later edits don't repeat it.
-    reportError(denied);
+    await nextTask();
     hooks.onUpdate.call(context);
+    // Give a rejected sync the time to surface as an unhandled rejection.
+    await nextTask();
     expect(errors).toEqual([denied]);
 
     // The next failed result is reported too.
     failure = gone;
-    reportError(gone);
+    update();
     hooks.onUpdate.call(context);
     expect(errors).toEqual([denied, gone]);
   });
 
   test("leaves a failed version query unhandled when there is no onSyncError", async () => {
     const failure = new Error("not allowed");
-    let reportError!: (error: Error) => void;
-    const convex = {
-      onUpdate: (...args: unknown[]) => {
-        reportError = args[3] as typeof reportError;
-        return {
-          getCurrentValue: () => {
-            throw failure;
-          },
-          unsubscribe: vi.fn(),
-        };
-      },
-    } as unknown as ConvexClient;
+    const { onUpdate } = versionSubscription(() => {
+      throw failure;
+    });
+    const convex = { onUpdate } as unknown as ConvexClient;
     const hooks = syncExtension(convex, "doc", syncApi, {
       initialContent: { type: "doc", content: [] },
       initialVersion: 1,
@@ -540,9 +566,9 @@ describe("version query errors", () => {
     const context = { editor: { state: stateAt(1, "me") } as Editor };
 
     // The sync has stopped, so the app hears of it once, not on every edit.
-    const unhandled = await unhandledRejections(() => {
+    const unhandled = await unhandledRejections(async () => {
       hooks.onCreate.call(context);
-      reportError(failure);
+      await nextTask();
       hooks.onUpdate.call(context);
     });
     expect(unhandled).toEqual([failure]);
@@ -551,20 +577,21 @@ describe("version query errors", () => {
   test("keeps an onSyncError that throws out of the client's update loop", async () => {
     const failure = new Error("not allowed");
     const bug = new Error("the handler threw");
-    let reportError!: (error: Error) => void;
-    const convex = {
-      onUpdate: (...args: unknown[]) => {
-        reportError = args[3] as typeof reportError;
-        return { getCurrentValue: () => undefined, unsubscribe: vi.fn() };
-      },
-    } as unknown as ConvexClient;
+    let failed = false;
+    const { onUpdate, update } = versionSubscription(() => {
+      if (failed) throw failure;
+      return undefined;
+    });
+    const convex = { onUpdate } as unknown as ConvexClient;
     const hooks = extensionWith(convex, () => {
       throw bug;
     }).config as unknown as { onCreate: (this: { editor: Editor }) => void };
 
     const unhandled = await unhandledRejections(() => {
       hooks.onCreate.call({ editor: { state: stateAt(1, "me") } as Editor });
-      expect(() => reportError(failure)).not.toThrow();
+      // The query fails, and the client tells its listeners.
+      failed = true;
+      expect(update).not.toThrow();
     });
     expect(unhandled).toEqual([bug]);
   });
@@ -574,14 +601,14 @@ describe("version query errors", () => {
  * Runs `act` and returns the rejections it left unhandled, which would
  * otherwise fail the test run.
  */
-async function unhandledRejections(act: () => void) {
+async function unhandledRejections(act: () => void | Promise<void>) {
   const listeners = process.listeners("unhandledRejection");
   process.removeAllListeners("unhandledRejection");
   const reasons: unknown[] = [];
   process.on("unhandledRejection", (reason) => reasons.push(reason));
   try {
-    act();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await act();
+    await nextTask();
   } finally {
     process.removeAllListeners("unhandledRejection");
     for (const listener of listeners) {
@@ -609,16 +636,13 @@ function liveEditor(state: EditorState) {
 describe("updates from the subscription", () => {
   test("a new version starts a sync", async () => {
     let readVersion = (): number | undefined => undefined;
-    let notify!: () => void;
+    const { onUpdate, update } = versionSubscription(() => readVersion());
     const submit = vi.fn(async (_args: SubmitStepsArgs) => ({
       status: "synced" as const,
     }));
     const convex = {
       mutation: (_reference: unknown, args: SubmitStepsArgs) => submit(args),
-      onUpdate: (...args: unknown[]) => {
-        notify = args[2] as typeof notify;
-        return { getCurrentValue: () => readVersion(), unsubscribe: vi.fn() };
-      },
+      onUpdate,
     } as unknown as ConvexClient;
     const hooks = syncExtension(
       convex,
@@ -635,10 +659,11 @@ describe("updates from the subscription", () => {
 
     // The query is still loading, so there is no version to sync to.
     hooks.onCreate.call(context);
+    await nextTask();
     expect(submit).not.toHaveBeenCalled();
 
     readVersion = () => 1;
-    notify();
+    update();
     await vi.waitFor(() =>
       expect(collab.sendableSteps(editor.state)).toBeNull(),
     );
@@ -684,6 +709,224 @@ describe("updates from the subscription", () => {
       version: 1,
     });
     hooks.onDestroy.call(context);
+  });
+
+  type Hooks = {
+    onCreate: (this: { editor: Editor }) => void;
+    onUpdate: (this: { editor: Editor }) => void;
+    onDestroy: (this: { editor: Editor }) => void;
+  };
+  const initialState = {
+    initialContent: { type: "doc", content: [] },
+    initialVersion: 1,
+  };
+
+  test("a newer version queues a retry behind the sync in flight", async () => {
+    let version = 1;
+    const { onUpdate, update } = versionSubscription(() => version);
+    let finishSubmit!: () => void;
+    const submit = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          finishSubmit = () => resolve({ status: "synced" });
+        }),
+    );
+    const query = vi.fn(async () => ({ steps: [], clientIds: [] }));
+    const convex = { mutation: submit, query, onUpdate };
+    const hooks = syncExtension(
+      convex as unknown as ConvexClient,
+      "doc",
+      syncApi,
+      initialState,
+      { snapshotDebounceMs: 1e6 },
+    ).config as unknown as Hooks;
+    const editor = liveEditor(typeText(stateAt(1, "me"), "hello"));
+    const context = { editor: editor as unknown as Editor };
+
+    hooks.onCreate.call(context);
+    expect(submit).toHaveBeenCalledOnce();
+    // Another client's steps land while the submit is in flight.
+    version = 3;
+    update();
+    expect(query).not.toHaveBeenCalled();
+
+    finishSubmit();
+    await vi.waitFor(() =>
+      expect(query).toHaveBeenCalledWith(syncApi.getSteps, {
+        id: "doc",
+        version: 2,
+      }),
+    );
+    hooks.onDestroy.call(context);
+  });
+
+  test("the same version again retries a sync that failed", async () => {
+    const errors: Error[] = [];
+    const { onUpdate, update } = versionSubscription(() => 1);
+    const submit = vi.fn(() => Promise.reject(new Error("offline")));
+    const convex = { mutation: submit, onUpdate } as unknown as ConvexClient;
+    const hooks = extensionWith(convex, (error) => errors.push(error))
+      .config as unknown as Hooks;
+    const editor = { state: typeText(stateAt(1, "me"), "hello") } as Editor;
+
+    // The version the client already had is no reason to sync again.
+    hooks.onCreate.call({ editor });
+    await nextTask();
+    expect(submit).toHaveBeenCalledOnce();
+
+    // After a reconnect the client tells of every result again.
+    update();
+    expect(submit).toHaveBeenCalledTimes(2);
+    await nextTask();
+    expect(errors).toHaveLength(2);
+  });
+
+  test("the same version after a failed query syncs what changed meanwhile", async () => {
+    let failed = false;
+    const { onUpdate, update } = versionSubscription(() => {
+      if (failed) throw new Error("not allowed");
+      return 1;
+    });
+    const submit = vi.fn(async () => ({ status: "synced" as const }));
+    const convex = { mutation: submit, onUpdate } as unknown as ConvexClient;
+    const hooks = syncExtension(convex, "doc", syncApi, initialState, {
+      onSyncError: () => {},
+      snapshotDebounceMs: 1e6,
+    }).config as unknown as Hooks;
+    const editor = liveEditor(stateAt(1, "me"));
+    const context = { editor: editor as unknown as Editor };
+
+    // The query fails before the client has told of the version it had.
+    hooks.onCreate.call(context);
+    failed = true;
+    update();
+    editor.state = typeText(editor.state, "hello");
+    hooks.onUpdate.call(context);
+    expect(submit).not.toHaveBeenCalled();
+
+    failed = false;
+    update();
+    await vi.waitFor(() =>
+      expect(collab.sendableSteps(editor.state)).toBeNull(),
+    );
+    hooks.onDestroy.call(context);
+  });
+
+  test("an editor created while the query fails syncs when it recovers", async () => {
+    let failed = false;
+    const { onUpdate, update } = versionSubscription(() => {
+      if (failed) throw new Error("not allowed");
+      return 1;
+    });
+    const submit = vi.fn(async () => ({ status: "synced" as const }));
+    const convex = { mutation: submit, onUpdate } as unknown as ConvexClient;
+    // Two editors on one extension, as under React's StrictMode.
+    const hooks = syncExtension(convex, "doc", syncApi, initialState, {
+      onSyncError: () => {},
+      snapshotDebounceMs: 1e6,
+    }).config as unknown as Hooks;
+    const first = {
+      editor: liveEditor(stateAt(1, "one")) as unknown as Editor,
+    };
+    hooks.onCreate.call(first);
+    await nextTask();
+    failed = true;
+    update();
+    const editor = liveEditor(typeText(stateAt(1, "two"), "hello"));
+    const second = { editor: editor as unknown as Editor };
+    hooks.onCreate.call(second);
+    await nextTask();
+    expect(submit).not.toHaveBeenCalled();
+
+    // The version is the one the first editor read, and news to the second.
+    failed = false;
+    update();
+    await vi.waitFor(() =>
+      expect(collab.sendableSteps(editor.state)).toBeNull(),
+    );
+    hooks.onDestroy.call(first);
+    hooks.onDestroy.call(second);
+  });
+});
+
+/**
+ * A real `ConvexClient` with no server: its socket opens and records what the
+ * client sends. With `missing`, it answers the version query with `null`, the
+ * version of a document that does not exist.
+ */
+function clientOnRecordingSocket(missing = false) {
+  const sent: string[] = [];
+  const answer = JSON.stringify({
+    type: "Transition",
+    startVersion: { querySet: 0, identity: 0, ts: "AAAAAAAAAAA=" },
+    endVersion: { querySet: 1, identity: 0, ts: "AAAAAAAAAAA=" },
+    modifications: [
+      {
+        type: "QueryUpdated",
+        queryId: 0,
+        value: null,
+        logLines: [],
+        journal: null,
+      },
+    ],
+  });
+  class Socket {
+    onopen?: () => void;
+    onmessage?: (message: { data: string }) => void;
+    constructor() {
+      setTimeout(() => this.onopen?.(), 0);
+    }
+    send = (message: string) => {
+      sent.push(message);
+      if (missing && message.includes('"Add"')) {
+        setTimeout(() => this.onmessage?.({ data: answer }), 0);
+      }
+    };
+    close() {}
+  }
+  const convex = new ConvexClient("https://example.convex.cloud", {
+    webSocketConstructor: Socket as unknown as typeof WebSocket,
+  });
+  return { convex, sent };
+}
+
+describe("a real ConvexClient", () => {
+  test("subscribes and unsubscribes", async () => {
+    const { convex, sent } = clientOnRecordingSocket();
+    const hooks = extensionWith(convex, () => {}).config as unknown as {
+      onCreate: (this: { editor: Editor }) => void;
+      onDestroy: (this: { editor: Editor }) => void;
+    };
+    const context = { editor: { state: stateAt(1, "me") } as Editor };
+
+    hooks.onCreate.call(context);
+    await vi.waitFor(() => expect(sent.join()).toContain("latestVersion"));
+    expect(sent.join()).not.toContain('"Remove"');
+    hooks.onDestroy.call(context);
+    expect(sent.join()).toContain('"Remove"');
+    void convex.close();
+  });
+
+  test("starts one sync on a version it already has", async () => {
+    const { convex } = clientOnRecordingSocket(true);
+    // Another subscriber has the version before the editor is created.
+    const told = vi.fn();
+    convex.onUpdate(syncApi.latestVersion, { id: "doc" }, told);
+    await vi.waitFor(() => expect(told).toHaveBeenCalled());
+    const errors: Error[] = [];
+    // At version 2 the document has to exist, so every sync fails.
+    const hooks = syncExtension(
+      convex,
+      "doc",
+      syncApi,
+      { initialContent: { type: "doc", content: [] }, initialVersion: 2 },
+      { onSyncError: (error) => errors.push(error) },
+    ).config as unknown as { onCreate: (this: { editor: Editor }) => void };
+
+    hooks.onCreate.call({ editor: { state: stateAt(2, "me") } as Editor });
+    await nextTask();
+    expect(errors).toHaveLength(1);
+    void convex.close();
   });
 });
 
@@ -749,16 +992,24 @@ describe("syncExtension from ./tiptap", () => {
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
-  test("reports a version query that had already failed", async () => {
-    const errors: Error[] = [];
-    const failure = new Error("not allowed");
-    // Another subscriber has the failed result, so the watch never updates.
+  const failure = new Error("not allowed");
+
+  /**
+   * An editor on a client whose version query had already failed: another
+   * subscriber has the failed result, so the watch updates only on `notify`.
+   */
+  function editorOnFailedQuery(onSyncError: (error: Error) => void) {
+    let notify!: () => void;
+    const unsubscribe = vi.fn();
     const convex = {
       watchQuery: () => ({
         localQueryResult: () => {
           throw failure;
         },
-        onUpdate: () => vi.fn(),
+        onUpdate: (listener: () => void) => {
+          notify = listener;
+          return unsubscribe;
+        },
       }),
     } as unknown as ConvexReactClient;
     const hooks = reactSyncExtension(
@@ -766,16 +1017,142 @@ describe("syncExtension from ./tiptap", () => {
       "doc",
       syncApi,
       { initialContent: { type: "doc", content: [] }, initialVersion: 1 },
-      { onSyncError: (error) => errors.push(error) },
+      { onSyncError },
     ).config as unknown as {
       onCreate: (this: { editor: Editor }) => void;
       onUpdate: (this: { editor: Editor }) => void;
+      onDestroy: (this: { editor: Editor }) => void;
     };
     const context = { editor: { state: stateAt(1, "me") } as Editor };
+    return { hooks, context, unsubscribe, notify: () => notify() };
+  }
+
+  test("reports a version query that had already failed, after onCreate", async () => {
+    const errors: Error[] = [];
+    const { hooks, context } = editorOnFailedQuery((error) =>
+      errors.push(error),
+    );
 
     hooks.onCreate.call(context);
     hooks.onUpdate.call(context);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(errors).toEqual([]);
+    await nextTask();
     expect(errors).toEqual([failure]);
   });
+
+  test("does not repeat a failure that the watch reported first", async () => {
+    const errors: Error[] = [];
+    const { hooks, context, notify } = editorOnFailedQuery((error) =>
+      errors.push(error),
+    );
+
+    hooks.onCreate.call(context);
+    notify();
+    expect(errors).toEqual([failure]);
+    await nextTask();
+    expect(errors).toEqual([failure]);
+  });
+
+  test("does not report to an editor that was destroyed first", async () => {
+    const errors: Error[] = [];
+    const { hooks, context } = editorOnFailedQuery((error) =>
+      errors.push(error),
+    );
+
+    hooks.onCreate.call(context);
+    hooks.onDestroy.call(context);
+    await nextTask();
+    expect(errors).toEqual([]);
+  });
+
+  test("an onSyncError that destroys the editor leaves nothing behind", async () => {
+    const beforeUnload = new Set<unknown>();
+    vi.stubGlobal("window", {
+      addEventListener: (_type: string, listener: unknown) =>
+        beforeUnload.add(listener),
+      removeEventListener: (_type: string, listener: unknown) =>
+        beforeUnload.delete(listener),
+    });
+    // The app gives up on the editor when the sync fails.
+    let giveUp = () => {};
+    const { hooks, context, unsubscribe } = editorOnFailedQuery(() => giveUp());
+    giveUp = () => hooks.onDestroy.call(context);
+
+    hooks.onCreate.call(context);
+    await nextTask();
+    vi.unstubAllGlobals();
+    expect(unsubscribe).toHaveBeenCalledOnce();
+    expect(beforeUnload.size).toBe(0);
+  });
+});
+
+describe("a version the client already has", () => {
+  type Submit = () => Promise<never>;
+  type OnSyncError = (error: Error) => void;
+  const clients: [string, (s: Submit, e: OnSyncError) => AnyExtension][] = [
+    [
+      "ConvexClient",
+      (mutation, onSyncError) => {
+        const { onUpdate } = versionSubscription(() => 1);
+        const convex = { mutation, onUpdate } as unknown as ConvexClient;
+        return extensionWith(convex, onSyncError);
+      },
+    ],
+    [
+      "ConvexReactClient",
+      (mutation, onSyncError) => {
+        // Another subscriber has the version, so the watch never updates.
+        const watch = { localQueryResult: () => 1, onUpdate: () => vi.fn() };
+        const convex = { mutation, watchQuery: () => watch };
+        return reactSyncExtension(
+          convex as unknown as ConvexReactClient,
+          "doc",
+          syncApi,
+          { initialContent: { type: "doc", content: [] }, initialVersion: 1 },
+          { onSyncError },
+        );
+      },
+    ],
+  ];
+
+  // The submit fails, so a second sync would submit, and fail, again.
+  const offline = new Error("offline");
+
+  test.each(clients)("starts one sync on a %s", async (_client, extension) => {
+    const errors: Error[] = [];
+    const submit = vi.fn(() => Promise.reject(offline));
+    const hooks = extension(submit, (error) => errors.push(error))
+      .config as unknown as { onCreate: (this: { editor: Editor }) => void };
+    const editor = { state: typeText(stateAt(1, "me"), "hello") } as Editor;
+
+    // The sync starts with the editor, and being told of the version on a
+    // later task does not start another.
+    hooks.onCreate.call({ editor });
+    expect(submit).toHaveBeenCalledOnce();
+    await nextTask();
+    expect(submit).toHaveBeenCalledOnce();
+    expect(errors).toEqual([offline]);
+  });
+
+  test.each(clients)(
+    "syncs a change made in the task of create once on a %s",
+    async (_client, extension) => {
+      const errors: Error[] = [];
+      const submit = vi.fn(() => Promise.reject(offline));
+      const hooks = extension(submit, (error) => errors.push(error))
+        .config as unknown as {
+        onCreate: (this: { editor: Editor }) => void;
+        onUpdate: (this: { editor: Editor }) => void;
+      };
+      const editor = { state: stateAt(1, "me") };
+      const context = { editor: editor as Editor };
+
+      hooks.onCreate.call(context);
+      editor.state = typeText(editor.state, "hello");
+      hooks.onUpdate.call(context);
+      await nextTask();
+      expect(submit).toHaveBeenCalledOnce();
+      expect(errors).toEqual([offline]);
+    },
+  );
 });

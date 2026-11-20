@@ -119,10 +119,22 @@ export function syncExtension(
           }
           if (result !== undefined) callback(result);
         };
-        const unsubscribe = watch.onUpdate(notify);
-        // `ConvexClient` tells a new listener the result it already has. The
-        // watch only tells of changes, so do that here.
-        notify();
+        // A watch tells of changes only, where `ConvexClient` also tells a new
+        // listener of the result it already has. Do that as `ConvexClient`
+        // does: on a later task, when the caller has the subscription, and
+        // not at all if the watch has told of a result by then.
+        let notified = false;
+        const stopWatching = watch.onUpdate(() => {
+          notified = true;
+          notify();
+        });
+        const heldResult = setTimeout(() => {
+          if (!notified) notify();
+        }, 0);
+        const unsubscribe = () => {
+          clearTimeout(heldResult);
+          stopWatching();
+        };
         return Object.assign(unsubscribe, {
           unsubscribe,
           getCurrentValue: () => watch.localQueryResult(),

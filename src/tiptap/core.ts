@@ -123,6 +123,8 @@ export function syncExtension(
     Editor,
     (e: BeforeUnloadEvent) => void
   >();
+  // The server version each editor's latest sync read.
+  const readVersions = new Map<Editor, number | null>();
 
   async function trySync(editor: Editor) {
     let serverVersion;
@@ -131,11 +133,13 @@ export function syncExtension(
     } catch {
       // The query failed, so there is no version to sync to. The subscription
       // reports the failure.
+      readVersions.delete(editor);
       return;
     }
     if (serverVersion === undefined) {
       return;
     }
+    readVersions.set(editor, serverVersion);
     if (serverVersion && serverVersion > collab.getVersion(editor.state)) {
       clearTimeout(snapshotTimer);
       snapshotTimer = undefined;
@@ -208,6 +212,7 @@ export function syncExtension(
       const editor = this.editor;
       subscriptions.get(editor)?.unsubscribe();
       subscriptions.delete(editor);
+      readVersions.delete(editor);
       pendingEditors.delete(editor);
       const beforeUnloadHandler = beforeUnloadHandlers.get(editor);
       if (beforeUnloadHandler) {
@@ -251,7 +256,14 @@ export function syncExtension(
         this.editor.view.dispatch(tr);
       }
       const editor = this.editor;
-      const sync = () => void trySync(editor);
+      // A `ConvexClient` first tells a new listener the version it already
+      // has. That is not news when this editor's latest sync has read it.
+      let first = true;
+      const sync = (version: number | null) => {
+        const known = first && version === readVersions.get(editor);
+        first = false;
+        if (!known) void trySync(editor);
+      };
       subscriptions.set(
         editor,
         convex.onUpdate(
