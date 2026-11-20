@@ -193,6 +193,50 @@ export function MyComponent() {
 See a working example in [example.ts](./example/convex/example.ts) and
 [App.tsx](./example/src/App.tsx).
 
+### Tiptap on other frameworks
+
+`@convex-dev/prosemirror-sync/tiptap/core` exports the Tiptap extension without
+React. Pass it a
+[`ConvexClient`](https://docs.convex.dev/api/classes/browser.ConvexClient) and
+the snapshot to start from:
+
+```ts
+import { ConvexClient } from "convex/browser";
+import { Editor } from "@tiptap/core";
+import StarterKit from "@tiptap/starter-kit";
+import { syncExtension } from "@convex-dev/prosemirror-sync/tiptap/core";
+import { api } from "../convex/_generated/api";
+
+const convex = new ConvexClient(import.meta.env.VITE_CONVEX_URL);
+const snapshot = await convex.query(api.example.getSnapshot, { id: "some-id" });
+if (snapshot.content === null) throw new Error("Document not found");
+const initialContent = JSON.parse(snapshot.content);
+
+const editor = new Editor({
+  element: document.querySelector("#editor")!,
+  content: initialContent,
+  extensions: [
+    StarterKit,
+    syncExtension(convex, "some-id", api.example, {
+      initialContent,
+      initialVersion: snapshot.version,
+    }),
+  ],
+});
+```
+
+The snapshot's `content` is `null` until the document exists. To create the
+document, submit its first snapshot, which is what `sync.create` does in the
+React hook:
+
+```ts
+await convex.mutation(api.example.submitSnapshot, {
+  id: "some-id",
+  version: 1,
+  content: JSON.stringify({ type: "doc", content: [] }),
+});
+```
+
 ## Notes
 
 ### Configuring the snapshot debounce interval
@@ -246,6 +290,10 @@ The exception is `"Unsynced steps could not be flushed after destroy"`, which
 means local steps never made it to the server before the editor went away. If
 you haven't passed `onSyncError`, that one surfaces as an unhandled rejection
 rather than being dropped silently.
+
+A failed `latestVersion` query stops the sync until the query succeeds again. It
+is reported once per failed result, and without `onSyncError` it surfaces as an
+unhandled rejection too.
 
 ### Unmounting with unsynced changes
 
