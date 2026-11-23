@@ -233,7 +233,7 @@ React hook:
 await convex.mutation(api.example.submitSnapshot, {
   id: "some-id",
   version: 1,
-  content: JSON.stringify({ type: "doc", content: [] }),
+  content: JSON.stringify({ type: "doc", content: [{ type: "paragraph" }] }),
 });
 ```
 
