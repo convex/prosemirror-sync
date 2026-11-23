@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.0
+
+### Minor Changes
+
+- 73d610c: Add `@convex-dev/prosemirror-sync/tiptap/core`: `syncExtension`
+  without React, for Tiptap apps on other frameworks. It takes a `ConvexClient`
+  from `convex/browser`. React is now an optional peer, and `@tiptap/pm`, which
+  the extension imports, is a declared one.
+
+### Patch Changes
+
+- 009a381: Return the typed component API from the test registration helper.
+- 73d610c: Report a failed `latestVersion` query through `onSyncError`, once per
+  failed result. Without `onSyncError` it surfaces as one unhandled rejection,
+  where it was one on every sync before.
+
 ## 0.2.7
 
 - Guard pending step submission for editor destruction during server submission
