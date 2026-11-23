@@ -142,6 +142,22 @@ import "@blocknote/mantine/style.css";
 import { api } from "../convex/_generated/api";
 import { BlockNoteEditor } from "@blocknote/core";
 
+const EMPTY_DOC = {
+  type: "doc",
+  content: [
+    {
+      type: "blockGroup",
+      content: [
+        {
+          type: "blockContainer",
+          attrs: { id: "initialBlockId" },
+          content: [{ type: "paragraph" }],
+        },
+      ],
+    },
+  ],
+};
+
 export function MyComponent() {
   const sync = useBlockNoteSync<BlockNoteEditor>(api.example, "some-id");
   return sync.isLoading ? (
@@ -149,9 +165,7 @@ export function MyComponent() {
   ) : sync.editor ? (
     <BlockNoteView editor={sync.editor} />
   ) : (
-    <button onClick={() => sync.create({ type: "doc", content: [] })}>
-      Create document
-    </button>
+    <button onClick={() => sync.create(EMPTY_DOC)}>Create document</button>
   );
 }
 ```
@@ -183,7 +197,11 @@ export function MyComponent() {
       <EditorContent editor={null} />
     </EditorProvider>
   ) : (
-    <button onClick={() => sync.create({ type: "doc", content: [] })}>
+    <button
+      onClick={() =>
+        sync.create({ type: "doc", content: [{ type: "paragraph" }] })
+      }
+    >
       Create document
     </button>
   );
@@ -312,11 +330,12 @@ editor mounted until `collab.sendableSteps(editor.state)` returns null.
 You can create a new document from the client by calling `sync.create(content)`,
 or on the server by calling `prosemirrorSync.create(ctx, id, content)`.
 
-The content should be a JSON object matching the
-[Schema](https://tiptap.dev/docs/editor/core-concepts/schema). If you're using
-BlockNote, it needs to be the ProseMirror JSON representation of the BlockNote
-blocks. Look at the value stored in the `snapshots` table in your database for
-an example. Both can use this value: `{ type: "doc", content: [] }`
+The content must be a JSON object matching your editor's
+[schema](https://tiptap.dev/docs/editor/core-concepts/schema). For Tiptap with
+StarterKit, use a document with one empty paragraph, as in the
+[Tiptap example](#tiptap-editor). BlockNote needs that paragraph inside a
+`blockContainer` within a `blockGroup`, as in the
+[BlockNote example](#blocknote-editor).
 
 For client-side document creation:
 
