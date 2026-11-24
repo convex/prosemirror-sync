@@ -21,7 +21,8 @@ for more details.
 
 [![Example of editing](./blocknote.gif)](http://www.youtube.com/watch?v=TGd-Nl7PBYQ "Collaborative editing syncing")
 
-Example usage, see [below](#usage) for more details:
+The [full BlockNote example](#blocknote-editor) shows the imports and the
+`createEmptyDocument` helper used here.
 
 ```tsx
 function CollaborativeEditor() {
@@ -31,7 +32,9 @@ function CollaborativeEditor() {
   ) : sync.editor ? (
     <BlockNoteView editor={sync.editor} />
   ) : (
-    <button onClick={() => sync.create(EMPTY_DOC)}>Create document</button>
+    <button onClick={() => sync.create(createEmptyDocument())}>
+      Create document
+    </button>
   );
 }
 ```
@@ -142,6 +145,11 @@ import "@blocknote/mantine/style.css";
 import { api } from "../convex/_generated/api";
 import { BlockNoteEditor } from "@blocknote/core";
 
+function createEmptyDocument() {
+  const { pmSchema } = BlockNoteEditor.create();
+  return pmSchema.topNodeType.createAndFill()!.toJSON();
+}
+
 export function MyComponent() {
   const sync = useBlockNoteSync<BlockNoteEditor>(api.example, "some-id");
   return sync.isLoading ? (
@@ -149,7 +157,7 @@ export function MyComponent() {
   ) : sync.editor ? (
     <BlockNoteView editor={sync.editor} />
   ) : (
-    <button onClick={() => sync.create({ type: "doc", content: [] })}>
+    <button onClick={() => sync.create(createEmptyDocument())}>
       Create document
     </button>
   );
@@ -183,7 +191,11 @@ export function MyComponent() {
       <EditorContent editor={null} />
     </EditorProvider>
   ) : (
-    <button onClick={() => sync.create({ type: "doc", content: [] })}>
+    <button
+      onClick={() =>
+        sync.create({ type: "doc", content: [{ type: "paragraph" }] })
+      }
+    >
       Create document
     </button>
   );
@@ -312,11 +324,12 @@ editor mounted until `collab.sendableSteps(editor.state)` returns null.
 You can create a new document from the client by calling `sync.create(content)`,
 or on the server by calling `prosemirrorSync.create(ctx, id, content)`.
 
-The content should be a JSON object matching the
-[Schema](https://tiptap.dev/docs/editor/core-concepts/schema). If you're using
-BlockNote, it needs to be the ProseMirror JSON representation of the BlockNote
-blocks. Look at the value stored in the `snapshots` table in your database for
-an example. Both can use this value: `{ type: "doc", content: [] }`
+The content must be a JSON object matching your editor's
+[schema](https://tiptap.dev/docs/editor/core-concepts/schema). For Tiptap with
+StarterKit, use a document with one empty paragraph, as in the
+[Tiptap example](#tiptap-editor). The [BlockNote example](#blocknote-editor)
+uses BlockNote's ProseMirror schema to generate its default document, including
+an empty paragraph and a stable initial block ID.
 
 For client-side document creation:
 
