@@ -107,6 +107,8 @@
     "@blocknote/core": "0.51.3",
     "@blocknote/mantine": "0.51.3",
     "@blocknote/react": "0.51.3",
+    "@changesets/changelog-github": "1.0.1",
+    "@changesets/cli": "3.0.3",
     "@convex-dev/eslint-plugin": "5.0.0",
     "@edge-runtime/vm": "5.0.0",
     "@eslint/eslintrc": "3.3.5",
@@ -140,8 +142,7 @@
     "typescript": "5.9.3",
     "typescript-eslint": "8.60.0",
     "vite": "8.1.6",
-    "vitest": "4.1.7",
-    "@changesets/cli": "3.0.3"
+    "vitest": "4.1.7"
   },
   "types": "./dist/client/index.d.ts",
   "module": "./dist/client/index.js"
